@@ -1,7 +1,7 @@
 module Main where
 
-import Data.Char (digitToInt)
-import Numeric (readHex, readOct)
+import Data.Char (digitToInt, toLower)
+import Numeric (readFloat, readHex, readOct)
 import System.Environment
 import Text.ParserCombinators.Parsec hiding (spaces)
 
@@ -12,6 +12,8 @@ data LispVal
   | Number Integer
   | String String
   | Bool Bool
+  | Character Char
+  | Float Double
 
 symbol :: Parser Char
 symbol = oneOf "!#$%&|*+-/:<=>?@^_~"
@@ -24,25 +26,6 @@ readExpr input = case parse parseExpr "lisp" input of
   Left err -> "No match: " ++ show err
   Right _ -> "Found value"
 
-parseString :: Parser LispVal
-parseString = do
-  _ <- char '"'
-  x <- many (escapedChar <|> noneOf "\"")
-  _ <- char '"'
-  return $ String x
-  where
-    escapedChar :: Parser Char
-    escapedChar = do
-      _ <- char '\\'
-      c <- oneOf "\\\"nrt"
-      return $ case c of
-        '\\' -> '\\'
-        '"' -> '"'
-        'n' -> '\n'
-        'r' -> '\r'
-        't' -> '\t'
-        _ -> error ("Unsupported escape character: " ++ [c])
-
 parseAtom :: Parser LispVal
 parseAtom = do
   first <- letter <|> symbol
@@ -54,7 +37,7 @@ parseAtom = do
     _ -> Atom atom
 
 parseNumber :: Parser LispVal
-parseNumber = try parseRadixedNumber <|> parseDecimal
+parseNumber = try parseRadixedNumber <|> try parseFloat <|> parseDecimal
 
 parseRadixedNumber :: Parser LispVal
 parseRadixedNumber = do
@@ -77,6 +60,32 @@ parseRadixedNumber = do
         _ -> fail "Invalid hexadecimal number"
     _ -> fail "Invalid radix prefix"
 
+parseFloat :: Parser LispVal
+parseFloat = do
+  intPart <- many1 digit
+  dot <- char '.'
+  fracPart <- many1 digit
+  expPart <-
+    option
+      ""
+      ( do
+          e <- oneOf "eE"
+          sign <- option "" (string "+" <|> string "-")
+          digits <- many1 digit
+          return (e : sign ++ digits)
+      )
+  _ <-
+    option
+      ""
+      ( do
+          _ <- oneOf "sSfFdDlLeE"
+          many1 digit
+      )
+  let numStr = intPart ++ [dot] ++ fracPart ++ expPart
+  case readFloat numStr of
+    [(n, "")] -> return $ Float n
+    _ -> fail "Invalid float"
+
 parseDecimal :: Parser LispVal
 parseDecimal = Number . read <$> many1 digit
 
@@ -84,9 +93,42 @@ parseDecimal = Number . read <$> many1 digit
 bin2dec :: String -> Integer
 bin2dec = foldl (\acc x -> acc * 2 + toInteger (digitToInt x)) 0
 
+parseString :: Parser LispVal
+parseString = do
+  _ <- char '"'
+  x <- many (escapedChar <|> noneOf "\"")
+  _ <- char '"'
+  return $ String x
+  where
+    escapedChar :: Parser Char
+    escapedChar = do
+      _ <- char '\\'
+      c <- oneOf "\\\"nrt"
+      return $ case c of
+        '\\' -> '\\'
+        '"' -> '"'
+        'n' -> '\n'
+        'r' -> '\r'
+        't' -> '\t'
+        _ -> error ("Unsupported escape character: " ++ [c])
+
+parseCharacter :: Parser LispVal
+parseCharacter = do
+  _ <- try (string "#\\")
+  first <- anyChar
+  rest <- many letter
+  let name = first : rest
+  if null rest -- no extra letter: treat as a single character
+    then return $ Character first
+    else case map toLower name of
+      "space" -> return $ Character ' '
+      "newline" -> return $ Character '\n'
+      _ -> fail ("Unknown character literal: " ++ name)
+
 parseExpr :: Parser LispVal
 parseExpr =
-  parseAtom
+  parseCharacter
+    <|> parseAtom
     <|> parseString
     <|> parseNumber
 
