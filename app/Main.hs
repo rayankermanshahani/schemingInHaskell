@@ -54,7 +54,35 @@ parseAtom = do
     _ -> Atom atom
 
 parseNumber :: Parser LispVal
-parseNumber = Number . read <$> many1 digit
+parseNumber = try parseRadixedNumber <|> parseDecimal
+
+parseRadixedNumber :: Parser LispVal
+parseRadixedNumber = do
+  _ <- char '#'
+  radix <- oneOf "bodx"
+  case radix of
+    'b' -> do
+      digits <- many1 (oneOf "01")
+      return $ Number (bin2dec digits)
+    'o' -> do
+      digits <- many1 (oneOf "01234567")
+      case readOct digits of
+        [(n, "")] -> return $ Number n
+        _ -> fail "Invalid octal number"
+    'd' -> parseDecimal
+    'x' -> do
+      digits <- many1 hexDigit
+      case readHex digits of
+        [(n, "")] -> return $ Number n
+        _ -> fail "Invalid hexadecimal number"
+    _ -> fail "Invalid radix prefix"
+
+parseDecimal :: Parser LispVal
+parseDecimal = Number . read <$> many1 digit
+
+-- Helper function to convert binary string to an Integer
+bin2dec :: String -> Integer
+bin2dec = foldl (\acc x -> acc * 2 + toInteger (digitToInt x)) 0
 
 parseExpr :: Parser LispVal
 parseExpr =
